@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Browser CLI</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: Consolas, monospace;
+    }
+    #terminal {
+      padding: 20px;
+      white-space: pre-wrap;
+      height: calc(100vh - 52px);
+      overflow-y: auto;
+      box-sizing: border-box;
+    }
+    .input-line {
+      display: inline;
+    }
+    input {
+      background: transparent;
+      border: none;
+      color: #58a6ff;
+      font: inherit;
+      outline: none;
+      width: 90vw;
+    }
+    span.prompt {
+      color: #8b949e;
+    }
+    ::selection {
+      background: #58a6ff55;
+    }
+    footer {
+      background: #161b22;
+      color: #8b949e;
+      text-align: center;
+      padding: 16px 0;
+      position: fixed;
+      bottom: 0;
+      width: 100vw;
+      font-size: 1rem;
+      z-index: 10;
+    }
+    footer a {
+      color: #58a6ff;
+      text-decoration: none;
+      margin: 0 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="terminal"></div>
+  <script>
+    const terminal = document.getElementById("terminal");
+    let fs = JSON.parse(localStorage.getItem("cli-fs")) || { "/": {} };
+    let currentPath = localStorage.getItem("cli-path") || "/";
+    let history = JSON.parse(localStorage.getItem("cli-history")) || [];
+    let historyIndex = history.length;
+
+    function saveState() {
+      localStorage.setItem("cli-fs", JSON.stringify(fs));
+      localStorage.setItem("cli-path", currentPath);
+      localStorage.setItem("cli-history", JSON.stringify(history));
+    }
+
+    function getCurrentDir() {
+      const pathParts = currentPath.split("/").filter(Boolean);
+      let dir = fs["/"];
+      for (let part of pathParts) {
+        dir = dir[part];
+      }
+      return dir;
+    }
+
+    function renderInput() {
+      const prompt = document.createElement("div");
+      prompt.innerHTML = `<span class="prompt">$ ${currentPath}</span> <span class="input-line"><input type="text" /></span>`;
+      terminal.appendChild(prompt);
+      const input = prompt.querySelector("input");
+      input.focus();
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          const command = input.value;
+          history.push(command);
+          historyIndex = history.length;
+          prompt.innerHTML = `<span class="prompt">$ ${currentPath}</span> ${command}`;
+          handleCommand(command);
+        } else if (e.key === "ArrowUp") {
+          if (historyIndex > 0) {
+            historyIndex--;
+            input.value = history[historyIndex];
+          }
+        } else if (e.key === "ArrowDown") {
+          if (historyIndex < history.length - 1) {
+            historyIndex++;
+            input.value = history[historyIndex];
+          } else {
+            historyIndex = history.length;
+            input.value = "";
+          }
+        } else if (e.key === "Tab") {
+          e.preventDefault();
+          const current = input.value.trim();
+          const match = Object.keys(getCurrentDir()).find(k => k.startsWith(current.split(" ").pop()));
+          if (match) {
+            const parts = current.split(" ");
+            parts[parts.length - 1] = match;
+            input.value = parts.join(" ");
+          }
+        }
+      });
+    }
+
+    function handleCommand(input) {
+      const args = input.trim().split(/\s+/);
+      const cmd = args[0];
+      const rest = args.slice(1);
+      const dir = getCurrentDir();
+
+      const commands = {
+        mkdir([name]) {
+          if (!name) return print("mkdir: missing operand");
+          if (dir[name]) return print(`mkdir: cannot create directory '${name}': File exists`);
+          dir[name] = {};
+        },
+        ls() {
+          print(Object.keys(dir).join("\n"));
+        },
+        cd([name]) {
+          if (name === "..") {
+            if (currentPath !== "/") {
+              currentPath = currentPath.split("/").slice(0, -2).join("/") + "/";
+              if (currentPath === "") currentPath = "/";
+            }
+          } else if (dir[name] && typeof dir[name] === "object") {
+            currentPath += name + "/";
+          } else {
+            print(`cd: ${name}: No such directory`);
+          }
+        },
+        rmdir([name]) {
+          if (!name || !(name in dir) || typeof dir[name] !== "object") return print("rmdir: invalid directory");
+          delete dir[name];
+        },
+        rm([name]) {
+          if (!name || !(name in dir) || typeof dir[name] === "object") return print("rm: invalid file");
+          delete dir[name];
+        },
+        touch([name]) {
+          if (!name) return print("touch: missing file operand");
+          dir[name] = "";
+        },
+        echo(args) {
+          const match = args.join(" ").match(/"(.+)"\s*>\s*(\S+)/);
+          if (!match) return print("echo: invalid syntax");
+          const [, content, filename] = match;
+          dir[filename] = content;
+        },
+        cat([name]) {
+          if (!(name in dir)) return print(`cat: ${name}: No such file`);
+          if (typeof dir[name] === "object") return print(`cat: ${name}: Is a directory`);
+          print(dir[name]);
+        },
+        mv([src, dest]) {
+          if (!(src in dir)) return print(`mv: cannot stat '${src}': No such file or directory`);
+          dir[dest] = dir[src];
+          delete dir[src];
+        },
+        cp([src, dest]) {
+          if (!(src in dir)) return print(`cp: cannot stat '${src}': No such file or directory`);
+          const item = dir[src];
+          dir[dest] = typeof item === "object" ? JSON.parse(JSON.stringify(item)) : item;
+        },
+        curl([url]) {
+          if (!url) return print("curl: no URL specified");
+          print(`Fetching from ${url}...\n{\"message\": \"Hello from ${url}\"}`);
+        },
+        dir() { commands.ls(); },
+        del([name]) { commands.rm([name]); }
+      };
+
+      if (cmd in commands) {
+        commands[cmd](rest);
+      } else if (cmd !== "") {
+        print(`Command not recognized: ${cmd}`);
+      }
+
+      saveState();
+      renderInput();
+    }
+
+    function print(text) {
+      terminal.innerHTML += text + "\n";
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    renderInput();
+  </script>
+  <footer style="background:#161b22;color:#8b949e;text-align:center;padding:16px 0;position:fixed;bottom:0;width:100vw;font-size:1rem;z-index:10;">
+    A project by Nalgonda Lokesh &mdash; 
+    <a href="https://instagram.com/nalgondalokesh.ai" target="_blank" style="color:#58a6ff;text-decoration:none;margin:0 8px;">Instagram</a>|
+    <a href="https://www.linkedin.com/in/nalgondalokesh" target="_blank" style="color:#58a6ff;text-decoration:none;margin:0 8px;">LinkedIn</a>
+  </footer>
+</body>
+</html>
