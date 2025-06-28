@@ -25,5 +25,3 @@ A browser-based command-line interface (CLI) project that simulates basic file s
 A project by Nalgonda Lokesh  
 [Instagram](https://instagram.com/nalgondalokesh.ai) | [LinkedIn](https://www.linkedin.com/in/nalgondalokesh)
 
-## License
-MIT License
